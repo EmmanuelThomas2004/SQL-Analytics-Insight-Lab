@@ -1,0 +1,172 @@
+CREATE DATABASE RetailAnalytics;
+USE RetailAnalytics;
+
+CREATE TABLE Customers (
+    CustomerID INT PRIMARY KEY,
+    CustomerName VARCHAR(100),
+    City VARCHAR(50)
+);
+
+CREATE TABLE Products (
+    ProductID INT PRIMARY KEY,
+    ProductName VARCHAR(100),
+    Category VARCHAR(50),
+    Price DECIMAL(10,2)
+);
+
+CREATE TABLE Orders (
+    OrderID INT PRIMARY KEY,
+    CustomerID INT,
+    OrderDate DATE,
+    Status VARCHAR(30),
+    FOREIGN KEY (CustomerID) REFERENCES Customers(CustomerID)
+);
+
+CREATE TABLE OrderDetails (
+    OrderDetailID INT PRIMARY KEY,
+    OrderID INT,
+    ProductID INT,
+    Quantity INT,
+    UnitPrice DECIMAL(10,2),
+    FOREIGN KEY (OrderID) REFERENCES Orders(OrderID),
+    FOREIGN KEY (ProductID) REFERENCES Products(ProductID)
+);
+
+INSERT INTO Customers VALUES
+(1,'Arun','Kochi'),
+(2,'Meera','Chennai'),
+(3,'Rahul','Bengaluru'),
+(4,'Anjali','Hyderabad'),
+(5,'Vivek','Kochi');
+
+INSERT INTO Products VALUES
+(101,'Laptop','Electronics',60000),
+(102,'Mouse','Accessories',800),
+(103,'Keyboard','Accessories',1500),
+(104,'Monitor','Electronics',12000),
+(105,'Headphones','Accessories',2500);
+
+INSERT INTO Orders VALUES
+(1001,1,'2026-01-10','Completed'),
+(1002,2,'2026-01-15','Completed'),
+(1003,1,'2026-02-05','Completed'),
+(1004,3,'2026-02-18','Cancelled'),
+(1005,4,'2026-03-02','Completed'),
+(1006,5,'2026-03-12','Completed'),
+(1007,2,'2026-03-20','Completed');
+
+INSERT INTO OrderDetails VALUES
+(1,1001,101,1,60000),
+(2,1001,102,2,800),
+(3,1002,103,2,1500),
+(4,1002,105,1,2500),
+(5,1003,104,2,12000),
+(6,1004,101,1,60000),
+(7,1005,105,2,2500),
+(8,1006,102,3,800),
+(9,1007,103,1,1500),
+(10,1007,104,1,12000);
+
+SELECT C.CustomerName, SUM(OD.Quantity * OD.UnitPrice) AS TotalSpent
+FROM Customers C
+JOIN Orders O ON C.CustomerID = O.CustomerID
+JOIN OrderDetails OD ON O.OrderID = OD.OrderID
+WHERE O.Status = 'Completed'
+GROUP BY C.CustomerID, C.CustomerName
+ORDER BY TotalSpent DESC;
+
+SELECT P.ProductName, SUM(OD.Quantity) AS UnitsSold
+FROM Products P
+JOIN OrderDetails OD ON P.ProductID = OD.ProductID
+JOIN Orders O ON OD.OrderID = O.OrderID
+WHERE O.Status = 'Completed'
+GROUP BY P.ProductID, P.ProductName
+ORDER BY UnitsSold DESC;
+
+SELECT C.City, SUM(OD.Quantity * OD.UnitPrice) AS Revenue
+FROM Customers C
+JOIN Orders O ON C.CustomerID = O.CustomerID
+JOIN OrderDetails OD ON O.OrderID = OD.OrderID
+WHERE O.Status = 'Completed'
+GROUP BY C.City
+ORDER BY Revenue DESC;
+
+SELECT P.Category, SUM(OD.Quantity * OD.UnitPrice) AS CategoryRevenue
+FROM Products P
+JOIN OrderDetails OD ON P.ProductID = OD.ProductID
+JOIN Orders O ON OD.OrderID = O.OrderID
+WHERE O.Status = 'Completed'
+GROUP BY P.Category
+ORDER BY CategoryRevenue DESC;
+
+SELECT C.CustomerID, C.CustomerName
+FROM Customers C
+LEFT JOIN Orders O
+ON C.CustomerID = O.CustomerID
+WHERE O.OrderID IS NULL;
+
+SELECT C.CustomerID, C.CustomerName,
+       COUNT(DISTINCT O.OrderID) AS OrderCount
+FROM Customers C
+JOIN Orders O ON C.CustomerID = O.CustomerID
+WHERE O.Status = 'Completed'
+GROUP BY C.CustomerID, C.CustomerName
+HAVING COUNT(DISTINCT O.OrderID) > 1;
+
+WITH MonthlyRevenue AS (
+    SELECT DATEFROMPARTS(YEAR(O.OrderDate), MONTH(O.OrderDate), 1) AS SalesMonth,
+           SUM(OD.Quantity * OD.UnitPrice) AS Revenue
+    FROM Orders O
+    JOIN OrderDetails OD ON O.OrderID = OD.OrderID
+    WHERE O.Status = 'Completed'
+    GROUP BY DATEFROMPARTS(YEAR(O.OrderDate), MONTH(O.OrderDate), 1)
+)
+SELECT SalesMonth, Revenue,
+       LAG(Revenue) OVER (ORDER BY SalesMonth) AS PreviousMonthRevenue,
+       Revenue - LAG(Revenue) OVER (ORDER BY SalesMonth) AS RevenueChange
+FROM MonthlyRevenue
+ORDER BY SalesMonth;
+
+WITH ProductRevenue AS (
+    SELECT P.Category, P.ProductName,
+           SUM(OD.Quantity * OD.UnitPrice) AS Revenue
+    FROM Products P
+    JOIN OrderDetails OD ON P.ProductID = OD.ProductID
+    JOIN Orders O ON OD.OrderID = O.OrderID
+    WHERE O.Status = 'Completed'
+    GROUP BY P.Category, P.ProductID, P.ProductName
+)
+SELECT Category, ProductName, Revenue,
+       DENSE_RANK() OVER (
+           PARTITION BY Category ORDER BY Revenue DESC
+       ) AS CategoryRank
+FROM ProductRevenue;
+
+SELECT O.OrderID, O.OrderDate,
+       SUM(OD.Quantity * OD.UnitPrice) AS OrderValue
+FROM Orders O
+JOIN OrderDetails OD ON O.OrderID = OD.OrderID
+WHERE O.Status = 'Completed'
+GROUP BY O.OrderID, O.OrderDate
+HAVING SUM(OD.Quantity * OD.UnitPrice) > (
+    SELECT AVG(OrderValue)
+    FROM (
+        SELECT SUM(OD2.Quantity * OD2.UnitPrice) AS OrderValue
+        FROM Orders O2
+        JOIN OrderDetails OD2 ON O2.OrderID = OD2.OrderID
+        WHERE O2.Status = 'Completed'
+        GROUP BY O2.OrderID
+    ) AS OrderTotals
+)
+ORDER BY OrderValue DESC;
+
+SELECT
+    COUNT(DISTINCT CASE WHEN Status = 'Completed' THEN OrderID END) AS CompletedOrders,
+    COUNT(DISTINCT CASE WHEN Status = 'Cancelled' THEN OrderID END) AS CancelledOrders,
+    COUNT(DISTINCT OrderID) AS TotalOrders,
+    CAST(
+        100.0 * COUNT(DISTINCT CASE WHEN Status = 'Cancelled' THEN OrderID END)
+        / NULLIF(COUNT(DISTINCT OrderID), 0)
+        AS DECIMAL(5,2)
+    ) AS CancellationRate
+FROM Orders;
